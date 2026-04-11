@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HANDCONNECT — ULTRA ENGINE V3</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Orbitron:wght@400;700;900&display=swap');
+
+:root {
+  --bg: #03020a;
+  --accent: #00f2ff;
+  --accent2: #ff0055;
+  --glow: rgba(0,242,255,0.5);
+  --glass: rgba(5,10,25,0.7);
+  --glass-border: rgba(0,242,255,0.15);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; user-select:none; }
+
+body {
+  font-family: 'Space Mono', monospace;
+  background: var(--bg);
+  color: #e0e8ff;
+  overflow: hidden;
+  cursor: none;
+}
+
+#cursor {
+  position: fixed;
+  width: 20px; height: 20px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  transform: translate(-50%,-50%);
+  mix-blend-mode: screen;
+}
+
+.scene { position: fixed; inset: 0; }
+
+video {
+  position: absolute; inset:0; width:100%; height:100%;
+  object-fit: cover; transform: scaleX(-1);
+  filter: brightness(.35) contrast(1.3) saturate(.6);
+  z-index:0;
+}
+
+canvas {
+  position: absolute; inset:0; width:100%; height:100%;
+  object-fit: cover; transform: scaleX(-1);
+}
+#cBg    { z-index:1; }
+#cPaint { z-index:2; pointer-events:none; }
+#cFx    { z-index:3; pointer-events:none; }
+#cHand  { z-index:4; pointer-events:none; }
+
+#intro {
+  position: fixed; inset:0; z-index:200;
+  background: radial-gradient(ellipse at 50% 60%, #0a1428 0%, #03020a 70%);
+  display: flex; flex-direction:column;
+  align-items:center; justify-content:center; gap: 40px;
+  transition: opacity .8s ease;
+}
+#intro.fade { opacity:0; pointer-events:none; }
+
+.intro-logo {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 900;
+  font-size: clamp(2rem, 8vw, 5rem);
+  letter-spacing: .15em;
+  text-align: center;
+}
+.intro-logo em { color: var(--accent); font-style: normal; }
+.intro-sub { font-size:.7rem; letter-spacing:.3em; color:#445; text-transform:uppercase; }
+
+.ring-wrap {
+  position:relative; width:160px; height:160px;
+  display:flex; align-items:center; justify-content:center;
+}
+.ring {
+  position:absolute; border-radius:50%;
+  border:1px solid var(--accent);
+  animation: expand 2.4s ease-out infinite;
+}
+.ring:nth-child(1){width:80px; height:80px; animation-delay:0s;}
+.ring:nth-child(2){width:120px;height:120px;animation-delay:.6s;}
+.ring:nth-child(3){width:160px;height:160px;animation-delay:1.2s;}
+@keyframes expand {
+  0%  {transform:scale(.5);opacity:.8;}
+  100%{transform:scale(1.2);opacity:0;}
+}
+.hand-icon{font-size:2.5rem;animation:float 3s ease-in-out infinite;}
+@keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-10px);}}
+
+.init-btn {
+  font-family:'Orbitron',sans-serif;
+  font-size:.85rem; letter-spacing:.25em; text-transform:uppercase;
+  padding:16px 48px;
+  background:transparent;
+  border:1px solid var(--accent);
+  color:var(--accent);
+  cursor:pointer;
+  position:relative; overflow:hidden;
+  transition:color .3s, box-shadow .3s;
+}
+.init-btn::before {
+  content:''; position:absolute; inset:0;
+  background:var(--accent);
+  transform:scaleX(0); transform-origin:left;
+  transition:transform .3s ease;
+}
+.init-btn:hover{color:#000;box-shadow:0 0 40px var(--glow);}
+.init-btn:hover::before{transform:scaleX(1);}
+.init-btn span{position:relative;z-index:1;}
+
+#hud {
+  position:fixed;top:28px;left:28px;z-index:100;
+  display:flex;flex-direction:column;gap:14px;
+  opacity:0;pointer-events:none;transition:opacity .6s;
+}
+#hud.show{opacity:1;pointer-events:auto;}
+
+.hud-panel {
+  background:var(--glass);
+  backdrop-filter:blur(16px);
+  border:1px solid var(--glass-border);
+  border-left:3px solid var(--accent);
+  padding:12px 20px; min-width:160px;
+}
+.hud-label{font-size:.55rem;letter-spacing:.2em;color:var(--accent);text-transform:uppercase;margin-bottom:4px;opacity:.7;}
+.hud-val{font-family:'Orbitron',sans-serif;font-size:1.3rem;font-weight:700;color:#fff;text-shadow:0 0 12px var(--glow);}
+.hud-val .unit{font-size:.65rem;opacity:.5;font-family:'Space Mono';font-weight:400;}
+
+#controls {
+  position:fixed;bottom:28px;right:28px;z-index:100;
+  display:flex;flex-direction:column;gap:10px;align-items:flex-end;
+  opacity:0;pointer-events:none;transition:opacity .6s;
+}
+#controls.show{opacity:1;pointer-events:auto;}
+
+.ctrl-btn {
+  font-family:'Space Mono',monospace;
+  font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;
+  padding:10px 18px;
+  background:var(--glass);backdrop-filter:blur(16px);
+  border:1px solid var(--glass-border);
+  color:#aac;cursor:pointer;transition:all .2s;
+  display:flex;align-items:center;gap:10px;
+  min-width:180px;justify-content:flex-end;
+}
+.ctrl-btn:hover{border-color:var(--accent);color:#fff;transform:translateX(-4px);}
+.ctrl-btn.active{background:var(--accent);color:#000;border-color:var(--accent);box-shadow:0 0 20px var(--glow);}
+.dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0;}
+
+.theme-row{display:flex;gap:8px;justify-content:flex-end;}
+.theme-swatch{
+  width:28px;height:28px;border-radius:50%;
+  border:2px solid transparent;cursor:pointer;
+  transition:transform .2s,border-color .2s;
+}
+.theme-swatch:hover{transform:scale(1.2);}
+.theme-swatch.active{border-color:#fff;box-shadow:0 0 10px currentColor;}
+
+#toast {
+  position:fixed;bottom:28px;left:50%;transform:translateX(-50%);
+  z-index:100;
+  font-family:'Orbitron',sans-serif;font-size:.75rem;letter-spacing:.2em;text-transform:uppercase;
+  padding:10px 24px;
+  background:var(--glass);backdrop-filter:blur(16px);
+  border:1px solid var(--glass-border);
+  color:var(--accent);opacity:0;transition:opacity .3s;
+  pointer-events:none;text-shadow:0 0 10px var(--glow);
+  white-space:nowrap;
+}
+#toast.show{opacity:1;}
+
+#camError{
+  position:fixed;inset:0;z-index:300;
+  display:none;align-items:center;justify-content:center;
+  background:var(--bg);flex-direction:column;gap:16px;
+  text-align:center;padding:40px;
+}
+#camError.show{display:flex;}
+#camError h2{font-family:'Orbitron';color:var(--accent2);}
+#camError p{color:#667;font-size:.8rem;max-width:400px;line-height:1.6;}
+</style>
+</head>
+<body>
+
+<div id="cursor"></div>
+
+<div id="intro">
+  <div class="ring-wrap">
+    <div class="ring"></div><div class="ring"></div><div class="ring"></div>
+    <div class="hand-icon">🖐</div>
+  </div>
+  <div>
+    <div class="intro-logo">HAND<em>CONNECT</em></div>
+    <div class="intro-sub">Ultra Engine V3 &middot; MediaPipe AR</div>
+  </div>
+  <button class="init-btn" id="initBtn"><span>Initialize Core</span></button>
+</div>
+
+<div class="scene">
+  <video autoplay playsinline muted></video>
+  <canvas id="cBg"></canvas>
+  <canvas id="cPaint"></canvas>
+  <canvas id="cFx"></canvas>
+  <canvas id="cHand"></canvas>
+</div>
+
+<div id="hud">
+  <div class="hud-panel">
+    <div class="hud-label">Detection</div>
+    <div class="hud-val"><span id="uHands">00</span> <span class="unit">hands</span></div>
+  </div>
+  <div class="hud-panel">
+    <div class="hud-label">Engine FPS</div>
+    <div class="hud-val"><span id="uFps">00</span> <span class="unit">fps</span></div>
+  </div>
+  <div class="hud-panel">
+    <div class="hud-label">Gesture</div>
+    <div class="hud-val" id="uGesture" style="font-size:.9rem;">STANDBY</div>
+  </div>
+</div>
+
+<div id="controls">
+  <div class="theme-row">
+    <div class="theme-swatch active" data-theme="cyber"    style="background:#ff0055;" title="Cyberpunk"></div>
+    <div class="theme-swatch"        data-theme="electric" style="background:#00f2ff;" title="Electric"></div>
+    <div class="theme-swatch"        data-theme="toxic"    style="background:#39ff14;" title="Toxic"></div>
+    <div class="theme-swatch"        data-theme="deep"     style="background:#9900ff;" title="Deep Space"></div>
+    <div class="theme-swatch"        data-theme="solar"    style="background:#ff8c00;" title="Solar Flare"></div>
+  </div>
+  <button class="ctrl-btn active" id="btnPaint"><span class="dot"></span><span id="lblPaint">Air Paint: ON</span></button>
+  <button class="ctrl-btn"        id="btnBlur" ><span class="dot"></span><span id="lblBlur">Motion Blur: OFF</span></button>
+  <button class="ctrl-btn"        id="btnDepth"><span class="dot"></span><span id="lblDepth">Depth Scale: OFF</span></button>
+  <button class="ctrl-btn"        id="btnClear"><span>Clear Canvas</span></button>
+</div>
+
+<div id="toast"></div>
+
+<div id="camError">
+  <h2>Camera Access Denied</h2>
+  <p>Please allow camera access in your browser and reload.<br>Make sure you are on localhost, not a file:// URL.</p>
+</div>
+
+<script>
+'use strict';
+
+/* ── CONFIG ── */
+var CFG = {
+  LERP:          0.30,
+  MAX_PARTICLES: 300,
+  PINCH_THRESH:  0.055,
+  LIGHT_DIST:    0.25,
+  MAT_SPEED:     0.45,
+  MAT_FONT:      14,
+  RING_SIZE:     60,
+  RING_SPD:      2.0,
+  SPREAD_THRESH: 0.20,
+};
+
+var THEMES = {
+  cyber:    { accent:'#ff0055', glow:'rgba(255,0,85,0.5)',   matrix:'#1a0008', h:340 },
+  electric: { accent:'#00f2ff', glow:'rgba(0,242,255,0.5)',  matrix:'#00080f', h:188 },
+  toxic:    { accent:'#39ff14', glow:'rgba(57,255,20,0.5)',  matrix:'#031000', h:110 },
+  deep:     { accent:'#9900ff', glow:'rgba(153,0,255,0.5)',  matrix:'#08000f', h:280 },
+  solar:    { accent:'#ff8c00', glow:'rgba(255,140,0,0.5)',  matrix:'#100400', h:33  },
+};
+
+var CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17]
+];
+var TIPS = [4,8,12,16,20];
+
+/* ── DOM ── */
+var video  = document.querySelector('video');
+var cBg    = document.getElementById('cBg'),    bgCtx = cBg.getContext('2d');
+var cPaint = document.getElementById('cPaint'), pCtx  = cPaint.getContext('2d');
+var cFx    = document.getElementById('cFx'),    fxCtx = cFx.getContext('2d');
+var cHand  = document.getElementById('cHand'),  hCtx  = cHand.getContext('2d');
+
+/* ── STATE ── */
+var W = 0, H = 0;
+var appTime = 0, lastT = 0;
+var fpsFrames = 0, lastFpsT = 0;
+
+var theme   = 'cyber';
+var doPaint = true;
+var doBlur  = false;
+var doDepth = false;
+
+// Hand smoothing — plain object, no tricks
+var smoothData = [];  // array of hands
+var smoothLen  = -1;
+
+var particles = [];
+var ripples   = [];
+var trails    = [[], []];
+var prevPinch  = [false, false];
+var prevFist   = [false, false];
+var prevSpread = [false, false];
+
+var matCols = [];
+var handVel = 0;
+
+var audioCtx = null, humOsc = null, humGain = null;
+
+/* ── RNG ── */
+var _seed = 987654321;
+function rng() {
+  _seed ^= _seed << 13; _seed ^= _seed >> 17; _seed ^= _seed << 5;
+  return (_seed >>> 0) / 4294967295;
+}
+
+/* ── MATH ── */
+function lerp(a,b,t){ return a+(b-a)*t; }
+function dist2(p,q){ return Math.hypot(p.x-q.x, p.y-q.y); }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function toC(p){ return {x:p.x*W, y:p.y*H, z:p.z||0}; }
+function themeColor(t){
+  return 'hsl('+(((THEMES[theme].h + t*22)%360)+360)%360+',100%,60%)';
+}
+
+/* ── RESIZE ── */
+function resize() {
+  W = window.innerWidth; H = window.innerHeight;
+  [cBg,cPaint,cFx,cHand].forEach(function(c){ c.width=W; c.height=H; });
+  var cols = Math.floor(W / CFG.MAT_FONT);
+  matCols = [];
+  for(var i=0;i<cols;i++) matCols.push(rng()*(H/CFG.MAT_FONT));
+}
+window.addEventListener('resize', resize);
+
+/* ── THEME ── */
+function setTheme(t) {
+  theme = t;
+  document.documentElement.style.setProperty('--accent', THEMES[t].accent);
+  document.documentElement.style.setProperty('--glow',   THEMES[t].glow);
+  document.querySelectorAll('.theme-swatch').forEach(function(s){
+    s.classList.toggle('active', s.dataset.theme === t);
+  });
+}
+
+/* ── CURSOR ── */
+document.addEventListener('mousemove', function(e){
+  var c = document.getElementById('cursor');
+  c.style.left = e.clientX+'px';
+  c.style.top  = e.clientY+'px';
+});
+
+/* ── AUDIO ── */
+function initAudio() {
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    humOsc  = audioCtx.createOscillator();
+    humGain = audioCtx.createGain();
+    humOsc.type = 'sine';
+    humOsc.frequency.value = 120;
+    humGain.gain.value = 0;
+    humOsc.connect(humGain);
+    humGain.connect(audioCtx.destination);
+    humOsc.start();
+  } catch(e) { console.warn('Audio init failed'); }
+}
+
+function zapSound() {
+  if (!audioCtx) return;
+  try {
+    var osc  = audioCtx.createOscillator();
+    var gain = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(1200, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(60, audioCtx.currentTime+0.15);
+    gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime+0.15);
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    osc.start(); osc.stop(audioCtx.currentTime+0.15);
+  } catch(e){}
+}
+
+function updateHum(hands) {
+  if (!audioCtx || !humGain) return;
+  var ct = audioCtx.currentTime;
+  if (!hands.length) {
+    humGain.gain.setTargetAtTime(0, ct, 0.15);
+    return;
+  }
+  var tip  = hands[0][8];
+  var freq = 80 + (1 - clamp(tip.y,0,1)) * 480;
+  humOsc.frequency.setTargetAtTime(freq, ct, 0.08);
+  humGain.gain.setTargetAtTime(hands.length>1 ? 0.07 : 0.04, ct, 0.1);
+}
+
+/* ── SMOOTHING ── */
+function updateSmooth(raw) {
+  if (raw.length !== smoothLen) {
+    smoothData = raw.map(function(hand){
+      return hand.map(function(pt){ return {x:pt.x, y:pt.y, z:pt.z||0}; });
+    });
+    smoothLen = raw.length;
+    return;
+  }
+  for (var h=0; h<raw.length; h++) {
+    for (var p=0; p<raw[h].length; p++) {
+      var s = smoothData[h][p], r = raw[h][p];
+      s.x = lerp(s.x, r.x, CFG.LERP);
+      s.y = lerp(s.y, r.y, CFG.LERP);
+      s.z = lerp(s.z, r.z||0, CFG.LERP);
+    }
+  }
+}
+
+/* ── PARTICLES ── */
+function spawnParticle(pos, color, n) {
+  for (var i=0; i<n; i++) {
+    if (particles.length >= CFG.MAX_PARTICLES) return;
+    var a = rng()*Math.PI*2, sp = rng()*5+1;
+    particles.push({
+      x:pos.x, y:pos.y,
+      vx:Math.cos(a)*sp, vy:Math.sin(a)*sp - rng()*2,
+      life:1, color:color, size:rng()*3+1
+    });
+  }
+}
+
+function gravityBurst(center, color) {
+  particles.forEach(function(p){
+    var dx=center.x-p.x, dy=center.y-p.y, d=Math.hypot(dx,dy)+1;
+    p.vx+=(dx/d)*8; p.vy+=(dy/d)*8;
+  });
+  spawnParticle(center, color, 15);
+}
+
+/* ── RIPPLES ── */
+function createRipple(pos, color) {
+  ripples.push({x:pos.x, y:pos.y, r:0, life:1, color:color});
+}
+
+/* ── LIGHTNING ── */
+function drawLightning(ctx, a, b, segs, jitter, color, depth) {
+  if (depth === undefined) depth = 0;
+  if (depth > 2) return;
+  var pts = [a];
+  for (var i=1; i<segs; i++) {
+    var t = i/segs;
+    var pt = {
+      x: lerp(a.x,b.x,t)+(rng()-.5)*jitter,
+      y: lerp(a.y,b.y,t)+(rng()-.5)*jitter
+    };
+    pts.push(pt);
+    if (depth<2 && rng()>0.74) {
+      drawLightning(ctx, pt,
+        {x:pt.x+(rng()-.5)*70, y:pt.y+(rng()-.5)*70},
+        3, jitter*.5, color, depth+1);
+    }
+  }
+  pts.push(b);
+  var passes = [[4,color,0.1],[1.5,color,0.5],[0.5,'#fff',1]];
+  passes.forEach(function(pass){
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (var j=1; j<pts.length; j++) ctx.lineTo(pts[j].x, pts[j].y);
+    ctx.strokeStyle = pass[1];
+    ctx.lineWidth   = pass[0];
+    ctx.globalAlpha = pass[2];
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+}
+
+/* ── PAINT ── */
+function paintStroke(pts, color) {
+  [[10,0.12],[4,0.45],[1.5,1]].forEach(function(p){
+    pCtx.beginPath();
+    pCtx.moveTo(pts[0].x, pts[0].y);
+    pCtx.lineTo(pts[1].x, pts[1].y);
+    pCtx.strokeStyle = color;
+    pCtx.lineWidth   = p[0];
+    pCtx.lineCap     = 'round';
+    pCtx.globalAlpha = p[1];
+    pCtx.stroke();
+  });
+  pCtx.globalAlpha = 1;
+}
+
+/* ── TOAST ── */
+var toastTimer = null;
+function showToast(msg) {
+  var el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ el.classList.remove('show'); }, 1800);
+}
+
+/* ── GESTURE DETECTION ── */
+function tipExtended(hand, ti) {
+  return hand[ti].y < hand[ti-2].y;
+}
+
+function detectGestures(hands) {
+  hands.forEach(function(hand, idx) {
+    var col = THEMES[theme].accent;
+
+    var pinchD  = dist2(hand[4], hand[8]);
+    var isPinch = pinchD < CFG.PINCH_THRESH;
+    var isFist  = TIPS.every(function(t){ return hand[t].y > hand[0].y - 0.04; });
+    var allExt  = TIPS.every(function(t){ return tipExtended(hand,t); });
+    var isSpread= allExt && dist2(hand[4],hand[20]) > CFG.SPREAD_THRESH;
+    var isPoint = tipExtended(hand,8) && !tipExtended(hand,12) && !tipExtended(hand,16) && !tipExtended(hand,20);
+
+    var mid = toC({x:(hand[4].x+hand[8].x)/2, y:(hand[4].y+hand[8].y)/2});
+
+    if (isPinch && !prevPinch[idx]) { createRipple(mid,col); zapSound(); showToast('PINCH — LINK ESTABLISHED'); }
+    if (isFist  && !prevFist[idx])  { gravityBurst(toC(hand[0]),col); showToast('FIST — GRAVITY BURST'); }
+    if (isSpread&& !prevSpread[idx]){ spawnParticle(toC(hand[9]),col,20); showToast('SPREAD — WAVE PULSE'); }
+
+    if (isPinch && doPaint) {
+      trails[idx].push(mid);
+      if (trails[idx].length > 1) paintStroke(trails[idx].slice(-2), col);
+    } else if (!isPinch) { trails[idx] = []; }
+
+    TIPS.forEach(function(t){ if(rng()>0.78) spawnParticle(toC(hand[t]),themeColor(appTime),1); });
+
+    prevPinch[idx]  = isPinch;
+    prevFist[idx]   = isFist;
+    prevSpread[idx] = isSpread;
+
+    if (idx === 0) {
+      document.getElementById('uGesture').textContent =
+        isPinch ? 'PINCH' : isFist ? 'FIST' : isPoint ? 'POINT' : isSpread ? 'SPREAD' : 'STANDBY';
+    }
+  });
+
+  if (hands.length >= 2) {
+    var a = hands[0][8], b = hands[1][8];
+    if (dist2(a,b) < CFG.LIGHT_DIST) {
+      fxCtx.globalCompositeOperation = 'screen';
+      drawLightning(fxCtx, toC(a), toC(b), 6, 30, THEMES[theme].accent, 0);
+    }
+  }
+}
+
+/* ── DRAW HAND ── */
+function drawHand(hand, idx) {
+  var col   = themeColor(appTime + idx*0.5);
+  var depth = doDepth ? clamp(1-((hand[9].z||0)+0.5), 0.3, 1) : 1;
+
+  [[14,0.05],[5,0.2],[1.5,1]].forEach(function(p){
+    hCtx.beginPath();
+    hCtx.strokeStyle = col;
+    hCtx.lineWidth   = p[0]*depth;
+    hCtx.globalAlpha = p[1];
+    CONNECTIONS.forEach(function(c){
+      var a=toC(hand[c[0]]), b=toC(hand[c[1]]);
+      hCtx.moveTo(a.x,a.y); hCtx.lineTo(b.x,b.y);
+    });
+    hCtx.stroke();
+  });
+
+  TIPS.forEach(function(ti){
+    var p=toC(hand[ti]), r=3*depth;
+    hCtx.beginPath(); hCtx.arc(p.x,p.y,r*3.5,0,Math.PI*2);
+    hCtx.fillStyle=col; hCtx.globalAlpha=0.1; hCtx.fill();
+    hCtx.beginPath(); hCtx.arc(p.x,p.y,r,0,Math.PI*2);
+    hCtx.fillStyle='#fff'; hCtx.globalAlpha=1; hCtx.fill();
+  });
+
+  var palm=toC(hand[0]), knuck=toC(hand[9]);
+  var angle=Math.atan2(knuck.y-palm.y, knuck.x-palm.x);
+  var sz=CFG.RING_SIZE*depth;
+
+  hCtx.save();
+  hCtx.translate(palm.x,palm.y);
+  hCtx.rotate(angle+Math.PI/2);
+
+  hCtx.setLineDash([4,12]);
+  hCtx.beginPath(); hCtx.arc(0,0,sz,0,Math.PI*2);
+  hCtx.strokeStyle=THEMES[theme].accent; hCtx.lineWidth=1; hCtx.globalAlpha=0.45; hCtx.stroke();
+
+  hCtx.rotate(appTime*CFG.RING_SPD);
+  hCtx.setLineDash([]);
+  hCtx.beginPath(); hCtx.arc(0,0,sz+12,0,Math.PI*0.35);
+  hCtx.strokeStyle='#fff'; hCtx.lineWidth=1.5; hCtx.globalAlpha=0.55; hCtx.stroke();
+
+  hCtx.rotate(-appTime*CFG.RING_SPD*1.6);
+  hCtx.beginPath(); hCtx.arc(0,0,sz+22,0,Math.PI*0.2);
+  hCtx.strokeStyle=THEMES[theme].accent; hCtx.lineWidth=1; hCtx.globalAlpha=0.35; hCtx.stroke();
+
+  var sp = Math.min(Math.floor(clamp(dist2(hand[4],hand[20])/0.3,0,8)), 8);
+  hCtx.setLineDash([]);
+  for(var d=0;d<8;d++){
+    var a2=(d/8)*Math.PI*2;
+    hCtx.beginPath();
+    hCtx.arc(Math.cos(a2)*(sz+32), Math.sin(a2)*(sz+32), 2, 0, Math.PI*2);
+    hCtx.fillStyle = d<sp ? THEMES[theme].accent : '#334';
+    hCtx.globalAlpha=1; hCtx.fill();
+  }
+  hCtx.restore();
+  hCtx.setLineDash([]);
+  hCtx.globalAlpha=1;
+}
+
+/* ── PHYSICS ── */
+function updateFx() {
+  for(var i=particles.length-1;i>=0;i--){
+    var p=particles[i];
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.12; p.vx*=0.97; p.life-=0.018;
+    if(p.life<=0){particles.splice(i,1);continue;}
+    fxCtx.beginPath(); fxCtx.arc(p.x,p.y,p.size*p.life,0,Math.PI*2);
+    fxCtx.fillStyle=p.color; fxCtx.globalAlpha=p.life*p.life; fxCtx.fill();
+  }
+  for(var j=ripples.length-1;j>=0;j--){
+    var r=ripples[j];
+    r.r+=(200-r.r)*0.13; r.life-=0.03;
+    if(r.life<=0){ripples.splice(j,1);continue;}
+    [[r.r*1.4,2,0.3],[r.r,5,0.7],[r.r*.5,1.5,0.35]].forEach(function(rv){
+      fxCtx.beginPath(); fxCtx.arc(r.x,r.y,rv[0],0,Math.PI*2);
+      fxCtx.strokeStyle=r.color; fxCtx.lineWidth=rv[1]*r.life; fxCtx.globalAlpha=r.life*rv[2]; fxCtx.stroke();
+    });
+  }
+  fxCtx.globalAlpha=1;
+}
+
+/* ── BACKGROUND ── */
+function drawBg() {
+  bgCtx.fillStyle=THEMES[theme].matrix; bgCtx.globalAlpha=0.18;
+  bgCtx.fillRect(0,0,W,H); bgCtx.globalAlpha=1;
+  bgCtx.fillStyle=THEMES[theme].accent;
+  bgCtx.font=CFG.MAT_FONT+"px 'Space Mono'";
+  var sm=1+handVel*100;
+  for(var i=0;i<matCols.length;i++){
+    if(rng()>0.97){
+      bgCtx.globalAlpha=0.2+rng()*0.25;
+      bgCtx.fillText(String.fromCharCode(0x30A0+rng()*96), i*CFG.MAT_FONT, matCols[i]*CFG.MAT_FONT);
+    }
+    matCols[i]+=CFG.MAT_SPEED*sm;
+    if(matCols[i]*CFG.MAT_FONT>H && rng()>0.96) matCols[i]=0;
+  }
+  bgCtx.globalAlpha=1;
+}
+
+/* ── MAIN LOOP ── */
+function loop(ts) {
+  requestAnimationFrame(loop);
+  var dt=Math.min((ts-lastT)/1000,0.05); lastT=ts; appTime+=dt;
+  fpsFrames++;
+  if(ts>lastFpsT+1000){
+    document.getElementById('uFps').textContent=fpsFrames.toString().padStart(2,'0');
+    fpsFrames=0; lastFpsT=ts;
+  }
+  drawBg();
+  fxCtx.globalCompositeOperation='destination-out';
+  fxCtx.fillStyle=doBlur?'rgba(0,0,0,0.12)':'rgba(0,0,0,1)';
+  fxCtx.fillRect(0,0,W,H);
+  fxCtx.globalCompositeOperation='screen';
+  hCtx.clearRect(0,0,W,H);
+  hCtx.globalCompositeOperation='screen';
+  updateFx();
+  var hands=smoothData;
+  document.getElementById('uHands').textContent=hands.length.toString().padStart(2,'0');
+  if(hands.length>0){
+    hands.forEach(function(hand,idx){ drawHand(hand,idx); });
+    detectGestures(hands);
+    updateHum(hands);
+  } else {
+    updateHum([]);
+    document.getElementById('uGesture').textContent='STANDBY';
+  }
+  hCtx.globalCompositeOperation='source-over';
+  fxCtx.globalCompositeOperation='source-over';
+}
+
+/* ── MEDIAPIPE ── */
+function initMediaPipe() {
+  var hands = new Hands({
+    locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'+f; }
+  });
+  hands.setOptions({
+    maxNumHands:2, modelComplexity:1,
+    minDetectionConfidence:0.6, minTrackingConfidence:0.6
+  });
+  hands.onResults(function(results){
+    var raw = results.multiHandLandmarks || [];
+    if(raw.length && smoothData.length){
+      handVel = dist2(smoothData[0][8], raw[0][8]);
+    } else { handVel=0; }
+    updateSmooth(raw);
+  });
+
+  var cam = new Camera(video, {
+    onFrame: async function(){ await hands.send({image:video}); },
+    width:1280, height:720
+  });
+  cam.start().catch(function(err){
+    console.error('Camera error:',err);
+    document.getElementById('camError').classList.add('show');
+  });
+}
+
+/* ── UI WIRING ── */
+document.getElementById('initBtn').addEventListener('click', function(){
+  var overlay = document.getElementById('intro');
+  overlay.classList.add('fade');
+  setTimeout(function(){ overlay.style.display='none'; }, 850);
+  document.getElementById('hud').classList.add('show');
+  document.getElementById('controls').classList.add('show');
+  resize();
+  initAudio();
+  initMediaPipe();
+  requestAnimationFrame(loop);
+});
+
+document.getElementById('btnPaint').addEventListener('click', function(){
+  doPaint=!doPaint;
+  this.classList.toggle('active',doPaint);
+  document.getElementById('lblPaint').textContent='Air Paint: '+(doPaint?'ON':'OFF');
+  if(!doPaint) trails=[[],[]];
+});
+
+document.getElementById('btnBlur').addEventListener('click', function(){
+  doBlur=!doBlur;
+  this.classList.toggle('active',doBlur);
+  document.getElementById('lblBlur').textContent='Motion Blur: '+(doBlur?'ON':'OFF');
+});
+
+document.getElementById('btnDepth').addEventListener('click', function(){
+  doDepth=!doDepth;
+  this.classList.toggle('active',doDepth);
+  document.getElementById('lblDepth').textContent='Depth Scale: '+(doDepth?'ON':'OFF');
+});
+
+document.getElementById('btnClear').addEventListener('click', function(){
+  pCtx.clearRect(0,0,W,H);
+  trails=[[],[]];
+});
+
+document.querySelectorAll('.theme-swatch').forEach(function(s){
+  s.addEventListener('click', function(){ setTheme(s.dataset.theme); });
+});
+</script>
+</body>
+</html>
