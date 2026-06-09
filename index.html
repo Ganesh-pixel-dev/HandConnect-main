@@ -5,10 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HANDCONNECT — ULTRA ENGINE V3</title>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Orbitron:wght@400;700;900&display=swap');
 
@@ -248,23 +244,37 @@ canvas {
 
 <div id="camError">
   <h2>Camera Access Denied</h2>
-  <p>Please allow camera access in your browser and reload.<br>Make sure you are on localhost, not a file:// URL.</p>
+  <p>Please allow camera access in your browser and reload.<br>Open <b>http://localhost:3456</b> in Chrome or Edge — not a network IP or file:// URL.</p>
 </div>
+
+<script>
+window.mpVisionReady = new Promise(function(resolve){ window._resolveMpVision = resolve; });
+</script>
+<script type="module">
+import { FilesetResolver, HandLandmarker } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+window.FilesetResolver = FilesetResolver;
+window.HandLandmarker = HandLandmarker;
+window._resolveMpVision();
+</script>
 
 <script>
 'use strict';
 
 /* ── CONFIG ── */
 var CFG = {
-  LERP:          0.30,
-  MAX_PARTICLES: 300,
+  LERP:          0.38,
+  MAX_PARTICLES: 200,
   PINCH_THRESH:  0.055,
   LIGHT_DIST:    0.25,
   MAT_SPEED:     0.45,
-  MAT_FONT:      14,
+  MAT_FONT:      16,
+  MAT_STEP:      2,
   RING_SIZE:     60,
   RING_SPD:      2.0,
   SPREAD_THRESH: 0.20,
+  DETECT_MS:     33,
+  DETECT_W:      480,
+  DETECT_H:      270,
 };
 
 var THEMES = {
@@ -287,10 +297,13 @@ var TIPS = [4,8,12,16,20];
 
 /* ── DOM ── */
 var video  = document.querySelector('video');
-var cBg    = document.getElementById('cBg'),    bgCtx = cBg.getContext('2d');
-var cPaint = document.getElementById('cPaint'), pCtx  = cPaint.getContext('2d');
-var cFx    = document.getElementById('cFx'),    fxCtx = cFx.getContext('2d');
-var cHand  = document.getElementById('cHand'),  hCtx  = cHand.getContext('2d');
+var cBg    = document.getElementById('cBg'),    bgCtx = cBg.getContext('2d', { alpha: false, desynchronized: true });
+var cPaint = document.getElementById('cPaint'), pCtx  = cPaint.getContext('2d', { alpha: true, desynchronized: true });
+var cFx    = document.getElementById('cFx'),    fxCtx = cFx.getContext('2d', { alpha: true, desynchronized: true });
+var cHand  = document.getElementById('cHand'),  hCtx  = cHand.getContext('2d', { alpha: true, desynchronized: true });
+var uHands   = document.getElementById('uHands');
+var uFps     = document.getElementById('uFps');
+var uGesture = document.getElementById('uGesture');
 
 /* ── STATE ── */
 var W = 0, H = 0;
@@ -317,6 +330,12 @@ var matCols = [];
 var handVel = 0;
 
 var audioCtx = null, humOsc = null, humGain = null;
+var handLandmarker = null;
+var detectCanvas = document.createElement('canvas');
+var detectCtx = detectCanvas.getContext('2d', { alpha: false, desynchronized: true });
+var lastDetectT = 0, detectTs = 0, fxFrame = 0;
+detectCanvas.width = CFG.DETECT_W;
+detectCanvas.height = CFG.DETECT_H;
 
 /* ── RNG ── */
 var _seed = 987654321;
@@ -338,7 +357,7 @@ function themeColor(t){
 function resize() {
   W = window.innerWidth; H = window.innerHeight;
   [cBg,cPaint,cFx,cHand].forEach(function(c){ c.width=W; c.height=H; });
-  var cols = Math.floor(W / CFG.MAT_FONT);
+  var cols = Math.ceil(W / (CFG.MAT_FONT * CFG.MAT_STEP));
   matCols = [];
   for(var i=0;i<cols;i++) matCols.push(rng()*(H/CFG.MAT_FONT));
 }
@@ -533,14 +552,16 @@ function detectGestures(hands) {
       if (trails[idx].length > 1) paintStroke(trails[idx].slice(-2), col);
     } else if (!isPinch) { trails[idx] = []; }
 
-    TIPS.forEach(function(t){ if(rng()>0.78) spawnParticle(toC(hand[t]),themeColor(appTime),1); });
+    if (fxFrame % 3 === 0) {
+      TIPS.forEach(function(t){ if(rng()>0.94) spawnParticle(toC(hand[t]),themeColor(appTime),1); });
+    }
 
     prevPinch[idx]  = isPinch;
     prevFist[idx]   = isFist;
     prevSpread[idx] = isSpread;
 
     if (idx === 0) {
-      document.getElementById('uGesture').textContent =
+      uGesture.textContent =
         isPinch ? 'PINCH' : isFist ? 'FIST' : isPoint ? 'POINT' : isSpread ? 'SPREAD' : 'STANDBY';
     }
   });
@@ -643,9 +664,10 @@ function drawBg() {
   bgCtx.font=CFG.MAT_FONT+"px 'Space Mono'";
   var sm=1+handVel*100;
   for(var i=0;i<matCols.length;i++){
+    var colX = i * CFG.MAT_FONT * CFG.MAT_STEP;
     if(rng()>0.97){
       bgCtx.globalAlpha=0.2+rng()*0.25;
-      bgCtx.fillText(String.fromCharCode(0x30A0+rng()*96), i*CFG.MAT_FONT, matCols[i]*CFG.MAT_FONT);
+      bgCtx.fillText(String.fromCharCode(0x30A0+rng()*96), colX, matCols[i]*CFG.MAT_FONT);
     }
     matCols[i]+=CFG.MAT_SPEED*sm;
     if(matCols[i]*CFG.MAT_FONT>H && rng()>0.96) matCols[i]=0;
@@ -653,16 +675,37 @@ function drawBg() {
   bgCtx.globalAlpha=1;
 }
 
+/* ── HAND DETECTION (throttled, low-res) ── */
+function runHandDetection(ts) {
+  if (!handLandmarker || video.readyState < 2) return;
+  if (ts - lastDetectT < CFG.DETECT_MS) return;
+  lastDetectT = ts;
+  detectTs += CFG.DETECT_MS;
+  try {
+    detectCtx.drawImage(video, 0, 0, CFG.DETECT_W, CFG.DETECT_H);
+    var results = handLandmarker.detectForVideo(detectCanvas, detectTs);
+    var raw = results.landmarks || [];
+    if (raw.length && smoothData.length) {
+      handVel = dist2(smoothData[0][8], raw[0][8]);
+    } else { handVel = 0; }
+    updateSmooth(raw);
+  } catch (e) { console.error('Hand detection error:', e); }
+}
+
 /* ── MAIN LOOP ── */
 function loop(ts) {
   requestAnimationFrame(loop);
   var dt=Math.min((ts-lastT)/1000,0.05); lastT=ts; appTime+=dt;
+  fxFrame++;
   fpsFrames++;
   if(ts>lastFpsT+1000){
-    document.getElementById('uFps').textContent=fpsFrames.toString().padStart(2,'0');
+    uFps.textContent=fpsFrames.toString().padStart(2,'0');
     fpsFrames=0; lastFpsT=ts;
   }
-  drawBg();
+
+  runHandDetection(ts);
+
+  if (fxFrame % 2 === 0) drawBg();
   fxCtx.globalCompositeOperation='destination-out';
   fxCtx.fillStyle=doBlur?'rgba(0,0,0,0.12)':'rgba(0,0,0,1)';
   fxCtx.fillRect(0,0,W,H);
@@ -671,56 +714,100 @@ function loop(ts) {
   hCtx.globalCompositeOperation='screen';
   updateFx();
   var hands=smoothData;
-  document.getElementById('uHands').textContent=hands.length.toString().padStart(2,'0');
+  uHands.textContent=hands.length.toString().padStart(2,'0');
   if(hands.length>0){
     hands.forEach(function(hand,idx){ drawHand(hand,idx); });
     detectGestures(hands);
     updateHum(hands);
   } else {
     updateHum([]);
-    document.getElementById('uGesture').textContent='STANDBY';
+    uGesture.textContent='STANDBY';
   }
   hCtx.globalCompositeOperation='source-over';
   fxCtx.globalCompositeOperation='source-over';
 }
 
-/* ── MEDIAPIPE ── */
-function initMediaPipe() {
-  var hands = new Hands({
-    locateFile: function(f){ return 'https://cdn.jsdelivr.net/npm/@mediapipe/hands/'+f; }
-  });
-  hands.setOptions({
-    maxNumHands:2, modelComplexity:1,
-    minDetectionConfidence:0.6, minTrackingConfidence:0.6
-  });
-  hands.onResults(function(results){
-    var raw = results.multiHandLandmarks || [];
-    if(raw.length && smoothData.length){
-      handVel = dist2(smoothData[0][8], raw[0][8]);
-    } else { handVel=0; }
-    updateSmooth(raw);
-  });
+/* ── CAMERA ── */
+function isSecureCameraContext() {
+  return window.isSecureContext === true;
+}
 
-  var cam = new Camera(video, {
-    onFrame: async function(){ await hands.send({image:video}); },
-    width:1280, height:720
-  });
-  cam.start().catch(function(err){
-    console.error('Camera error:',err);
-    document.getElementById('camError').classList.add('show');
+function getCameraStream() {
+  if (!isSecureCameraContext()) {
+    return Promise.reject(new Error(
+      'Camera is blocked on this URL. Open http://localhost:3456 in Chrome or Edge — do not use the Network IP (192.168.x.x).'
+    ));
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return Promise.reject(new Error(
+      'Camera API unavailable. Use Chrome or Edge at http://localhost:3456 (not file:// or a network IP).'
+    ));
+  }
+  return navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
   });
 }
 
+/* ── HAND TRACKING (MediaPipe Tasks Vision) ── */
+var MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+var MP_MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
+function createHandLandmarker(vision, delegate) {
+  return window.HandLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: MP_MODEL, delegate: delegate },
+    runningMode: 'VIDEO',
+    numHands: 2,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5
+  });
+}
+
+async function initMediaPipe() {
+  try {
+    if (!window.HandLandmarker) await window.mpVisionReady;
+
+    var stream = await getCameraStream();
+    video.srcObject = stream;
+    await video.play();
+
+    var vision = await window.FilesetResolver.forVisionTasks(MP_WASM);
+    try {
+      handLandmarker = await createHandLandmarker(vision, 'GPU');
+    } catch (gpuErr) {
+      console.warn('GPU delegate unavailable, using CPU:', gpuErr);
+      handLandmarker = await createHandLandmarker(vision, 'CPU');
+    }
+  } catch (err) {
+    console.error('Camera/MediaPipe error:', err);
+    var errBox = document.getElementById('camError');
+    var errTitle = errBox.querySelector('h2');
+    var errText = errBox.querySelector('p');
+    if (err.name === 'NotAllowedError' || err.name === 'NotFoundError') {
+      errTitle.textContent = 'Camera Access Denied';
+      errText.innerHTML = 'Please allow camera access in your browser and reload.<br>Make sure you are on <b>http://localhost</b>, not a file:// URL.';
+    } else {
+      errTitle.textContent = 'Engine Initialization Failed';
+      errText.textContent = (err.message || String(err)) + ' — use Chrome or Edge over http://localhost.';
+    }
+    errBox.classList.add('show');
+  }
+}
+
 /* ── UI WIRING ── */
-document.getElementById('initBtn').addEventListener('click', function(){
+document.getElementById('initBtn').addEventListener('click', async function(){
+  var btn = this;
+  btn.disabled = true;
   var overlay = document.getElementById('intro');
   overlay.classList.add('fade');
   setTimeout(function(){ overlay.style.display='none'; }, 850);
   document.getElementById('hud').classList.add('show');
   document.getElementById('controls').classList.add('show');
   resize();
+  setTheme('cyber');
   initAudio();
-  initMediaPipe();
+  await initMediaPipe();
+  if (!handLandmarker) { btn.disabled = false; return; }
   requestAnimationFrame(loop);
 });
 
