@@ -1,8 +1,6 @@
-# HANDCONNECT — ULTRA ENGINE V3
+# HandConnect
 
-**HandConnect** is a cutting-edge, browser-based Augmented Reality (AR) experience powered by MediaPipe. It translates hand gestures into digital interactions in real-time, allowing users to paint in the air, trigger visual effects, and interact with a futuristic HUD using only their webcam.
-
-![Screenshot of HandConnect](https://raw.githubusercontent.com/username/HandConnect/main/screenshot.png) *(Placeholder for your screenshot)*
+**HandConnect** is a browser-based Augmented Reality (AR) experience powered by MediaPipe. It translates hand gestures into digital interactions in real-time, allowing users to paint in the air, trigger visual effects, and interact with a futuristic HUD using only their webcam.
 
 ## 🚀 Key Features
 
@@ -14,7 +12,7 @@
   - **Spread**: Release a wave pulse.
   - **Point**: Interaction mode.
 - **Visual Stylization**: Multiple themes including Cyberpunk, Electric, Toxic, Deep Space, and Solar Flare.
-- **Motion Blur & Depth Scaling**: Advanced visual options for a premium feel.
+- **Motion Blur & Depth Scaling**: Optional trails and size-by-depth effects.
 - **Interactive HUD**: Real-time feedback on detection, FPS, and detected gestures.
 
 ## 🛠️ Technology Stack
@@ -28,7 +26,7 @@
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/HandConnect.git
+   git clone https://github.com/Ganesh-pixel-dev/HandConnect-main.git
    ```
 2. **Open `index.html`**:
    Simply open the `index.html` file in any modern web browser (Chrome or Edge recommended).
@@ -40,7 +38,3 @@
 - Grant camera permissions when prompted.
 - Use the **Controls** panel (bottom right) to clear the canvas or toggle effects.
 - Use the **Theme Swatches** to change the visual aesthetic.
-
-## 📄 License
-
-This project is open-source and available under the [MIT License](LICENSE).
